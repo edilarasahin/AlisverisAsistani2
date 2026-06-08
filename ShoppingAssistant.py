@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import threading
+import random
 import time
 import re
 import os
@@ -435,16 +436,7 @@ class AgentGUI(ctk.CTk):
         }
 
     def update_dashboard(self):
-        """Dashboard kartlarını güncelle"""
-        if hasattr(self, 'dashboard_cards'):
-            stats = self.get_dashboard_stats()
-            # Dashboard'u yeniden oluştur
-            for card in self.dashboard_cards:
-                card.destroy()
-            # Parent'ı bul ve dashboard'u yeniden oluştur
-            main_content = self.winfo_children()[1]  # Ana içerik alanı
-            content = main_content.winfo_children()[1]  # İçerik frame'i
-            self.create_dashboard(content)
+        self.refresh_dashboard_values()
 
     def refresh_dashboard_values(self):
         """Dashboard değerlerini güncelle (label referansları ile)"""
@@ -944,24 +936,38 @@ class AgentGUI(ctk.CTk):
             self.chat_history_area._parent_canvas.yview_moveto(1.0)
 
     def launch_browser(self):
-        self.log("Tarayıcı başlatılıyor...")
+        """Kullanıcı butona bastığında tetiklenir, işlemi arka plana atar."""
+        self.status_text.configure(text="Tarayıcı Başlatılıyor...")
+        self.status_dot.configure(text_color=Colors.WARNING)
+        self.browser_btn.configure(state="disabled")
 
-        def _start():
-            try:
-                if self.agent is None:
-                    self.agent = SmartShoppingAgent()
+        # İşlemi yeni bir Thread'de başlatıyoruz ki arayüz donmasın
+        threading.Thread(target=self._launch_browser_thread, daemon=True).start()
 
-                if self.agent.driver:
-                    self.after(0, lambda: self.update_connection_status(True))
-                    self.after(0, lambda: self.log("Tarayıcı hazır. Trendyol'a giriş yapabilirsiniz."))
-                    # Trendyol ana sayfasını aç
-                    self.agent.driver.get("https://www.trendyol.com")
-                else:
-                    self.after(0, lambda: self.log("Tarayıcı başlatılamadı."))
-            except Exception as e:
-                self.after(0, lambda: self.log(f"Hata: {e}"))
+    def _launch_browser_thread(self):
+        """Arka planda çalışan gerçek başlatma metodu."""
+        try:
+            self.agent = SmartShoppingAgent(headless=False)
+            
+            if self.agent.driver:
+                self.browser_connected = True
+                # Arayüzü güncelleme işlemlerini ana akışa (after ile) gönderiyoruz
+                self.after(0, self._update_ui_on_browser_connected)
+            else:
+                self.after(0, self._update_ui_on_browser_failed)
+        except Exception as e:
+            print(f"Başlatma Hatası: {e}")
+            self.after(0, self._update_ui_on_browser_failed)
 
-        threading.Thread(target=_start, daemon=True).start()
+    def _update_ui_on_browser_connected(self):
+        self.status_text.configure(text="Bağlantı Aktif")
+        self.status_dot.configure(text_color=Colors.SUCCESS)
+        self.disconnect_btn.configure(state="normal")
+
+    def _update_ui_on_browser_failed(self):
+        self.status_text.configure(text="Başlatılamadı!")
+        self.status_dot.configure(text_color=Colors.ERROR)
+        self.browser_btn.configure(state="normal")
 
     def disconnect_browser(self):
         self.log("Tarayıcı bağlantısı kesiliyor...")
@@ -1065,7 +1071,7 @@ class AgentGUI(ctk.CTk):
         if success:
             with self.lock:
                 self.products = self.db.get_active_products()
-            self.render_list()
+            self.after(0, self.render_list)
             self.name_entry.delete(0, 'end')
             self.url_entry.delete(0, 'end')
             self.ins_entry.delete(0, 'end')
@@ -1185,7 +1191,7 @@ class AgentGUI(ctk.CTk):
         self.db.delete_product(url)
         with self.lock:
             self.products = self.db.get_active_products()
-        self.render_list()
+        self.after(0, self.render_list)
         self.log("Ürün silindi.")
 
     def export_json(self):
@@ -1377,12 +1383,17 @@ class AgentGUI(ctk.CTk):
                             self.db.move_to_history(product, status="MANUEL")
                         with self.lock:
                             self.products = self.db.get_active_products()
-                        self.render_list()
+                        self.after(0, self.render_list)
                 else:
                     self.log(f"{product['name']} - Fiyat okunamadı")
 
-            if self.is_monitoring:
-                time.sleep(15)
+            rastgele_bekleme_suresi = random.randint(15, 35)
+            self.log(f"Sonraki kontrol için {rastgele_bekleme_suresi} saniye beklenecek (Anti-Ban)...")
+            
+            for _ in range(rastgele_bekleme_suresi):
+                if not self.is_monitoring:
+                    break  # Kullanıcı durdur butonuna basarsa saniyeyi beklemeden hemen çıkar
+                time.sleep(1)
 
     def execute_buy(self, product):
         try:

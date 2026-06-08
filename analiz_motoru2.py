@@ -1,12 +1,14 @@
 import re
 import time
 import os
+import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 from groq import Groq
+from bs4 import BeautifulSoup  # <-- 1. ADIM: BeautifulSoup kütüphanesini ekledik
 from config import GROQ_API_KEY, MODEL_NAME
 
 class SmartShoppingAgent:
@@ -60,6 +62,64 @@ class SmartShoppingAgent:
         except Exception as e:
             return f"AI Hatası: {str(e)}"
 
+    # <-- 2. ADIM: Akıllı Sayfa Temizleme Fonksiyonunu Sınıfa Ekledik
+    def _get_clean_page_content(self, max_chars=4000):
+        """Web sayfasının gereksiz kısımlarını (kodlar, menüler, reklamlar) temizler."""
+        try:
+            if not self.driver:
+                return ""
+            
+            # Sayfanın HTML kodunu alıp BeautifulSoup'a veriyoruz
+            html = self.driver.page_source
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Yapay zekanın kafasını karıştıracak tüm çöp alanları siliyoruz
+            for element in soup(["script", "style", "nav", "footer", "header", "noscript", "iframe"]):
+                element.decompose()
+                
+            # Kalan metni alıp ardışık gereksiz boşlukları temizliyoruz
+            text = soup.get_text(separator=" ")
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            clean_text = " ".join(chunk for chunk in chunks if chunk)
+            
+            return clean_text[:max_chars]
+        except Exception as e:
+            print(f"BeautifulSoup temizleme hatası: {e}")
+            # Hata durumunda B Planı: Sistem kilitlenmesin diye eski düz metin yöntemine dön
+            try:
+                return self.driver.find_element(By.TAG_NAME, "body").text[:max_chars]
+            except:
+                return ""
+            
+    def _apply_stealth_behavior(self):
+        """Web sitesinin bot olduğumuzu anlamaması için insansı hareketler taklit eder."""
+        try:
+            if not self.driver:
+                return
+            
+            # 1. Sayfa açıldıktan sonra rastgele bir süre (1.5 - 3.5 saniye) hiçbir şey yapmadan bekle (İnsan gibi)
+            time.sleep(random.uniform(1.5, 3.5))
+            
+            # 2. Sayfayı yavaşça aşağı kaydır (Scroll)
+            # Bu işlem hem bot korumasını geçmek hem de aşağıda kalan fiyatların/görsellerin yüklenmesini sağlamak için çok önemlidir.
+            total_height = self.driver.execute_script("return document.body.scrollHeight")
+            scroll_to = random.randint(400, min(900, total_height)) # Rastgele bir derinliğe kadar kaydır
+            
+            for position in range(0, scroll_to, 40): # 40'ar piksel yavaşça kaydır
+                self.driver.execute_script(f"window.scrollTo(0, {position});")
+                time.sleep(random.uniform(0.05, 0.15)) # Kaydırırken aralarda rastgele milisaniyeler bekle
+                
+            # 3. Aşağı kaydırdıktan sonra ürünü inceliyormuş gibi rastgele (2 - 4 saniye) bekle
+            time.sleep(random.uniform(2.0, 4.0))
+            
+            # 4. Sayfayı tekrar en yukarı çıkar
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(0.5)
+            
+        except Exception as e:
+            print(f"Stealth kamuflaj hatası: {e}")        
+
     def get_market_analysis(self):
         """Herhangi bir e-ticaret sayfasını analiz eder."""
         try:
@@ -67,7 +127,10 @@ class SmartShoppingAgent:
                 return "Tarayıcı bağlı değil."
 
             title = self.driver.title
-            body_text = self.driver.find_element(By.TAG_NAME, "body").text[:5000]
+            self._apply_stealth_behavior()
+            
+            # <-- 3. ADIM: Eski ham body.text kodu yerine yeni temizleyiciyi bağladık (Sınırı 5000 yaptık)
+            body_text = self._get_clean_page_content(max_chars=5000)
 
             prompt = f"""
             Ürün Başlığı: {title}
@@ -114,7 +177,9 @@ class SmartShoppingAgent:
         if not self.driver:
             return {"stok": False, "fiyat": "Bilinmiyor"}
         try:
-            body_text = self.driver.find_element(By.TAG_NAME, "body").text[:2500]
+            self._apply_stealth_behavior()
+            # <-- 4. ADIM: Bu fonksiyon içindeki kırpmayı da temizlenmiş metne çevirdik
+            body_text = self._get_clean_page_content(max_chars=2500)
             return {"stok": "EVET", "fiyat": "Analiz Edildi"}
         except:
             return {"stok": "HATA", "fiyat": "0"}
